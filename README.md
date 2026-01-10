@@ -30,8 +30,8 @@ brew install python3
 
 2. Клонируйте репозиторий:
 ```bash
-git clone <repository-url>
-cd checkFRIKI
+git clone https://github.com/Kidpun/lovecfriki.git
+cd lovecfriki
 ```
 
 3. Создайте виртуальное окружение (рекомендуется):
@@ -50,9 +50,10 @@ pip install -r requirements.txt
 1. Установите Python с [python.org](https://www.python.org/downloads/)
    - При установке отметьте "Add Python to PATH"
 
-2. Откройте PowerShell или CMD и перейдите в папку проекта:
+2. Клонируйте репозиторий:
 ```powershell
-cd путь\к\checkFRIKI
+git clone https://github.com/Kidpun/lovecfriki.git
+cd lovecfriki
 ```
 
 3. Создайте виртуальное окружение:
@@ -76,8 +77,8 @@ sudo apt install python3 python3-pip python3-venv
 
 2. Клонируйте репозиторий:
 ```bash
-git clone <repository-url>
-cd checkFRIKI
+git clone https://github.com/Kidpun/lovecfriki.git
+cd lovecfriki
 ```
 
 3. Создайте виртуальное окружение:
