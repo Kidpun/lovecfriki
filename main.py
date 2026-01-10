@@ -24,6 +24,11 @@ REF_LINK_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+BOT_LINK_PATTERN = re.compile(
+    r'(?:https?://)?(?:t\.me|telegram\.me)/FreakRedanBot\?start=.+|tg://resolve\?.*domain=FreakRedanBot.*&start=.+',
+    re.IGNORECASE
+)
+
 INACTIVE_CHECK_PATTERN = re.compile(r'❌\s*Чек\s+уже\s+неактивен', re.IGNORECASE)
 
 SESSION_NAME = 'telegram_bot_session'
@@ -75,19 +80,37 @@ def extract_links_from_message(message: Message):
 def find_ref_links_in_buttons(message: Message):
     links = []
     
-    if message.reply_markup and hasattr(message.reply_markup, 'rows'):
-        for row in message.reply_markup.rows:
-            if hasattr(row, 'buttons'):
-                for button in row.buttons:
-                    if hasattr(button, 'url') and button.url:
-                        url = button.url
-                        if REF_LINK_PATTERN.search(url):
-                            if not url.startswith('http'):
-                                url = 'https://' + url
-                            links.append({
-                                'url': url,
-                                'button': button
-                            })
+    if not message:
+        return links
+    
+    if not hasattr(message, 'reply_markup') or not message.reply_markup:
+        return links
+    
+    try:
+        if hasattr(message.reply_markup, 'rows'):
+            for row in message.reply_markup.rows:
+                if hasattr(row, 'buttons'):
+                    for button in row.buttons:
+                        button_url = None
+                        if hasattr(button, 'url'):
+                            button_url = button.url
+                        
+                        if button_url:
+                            if 'FreakRedanBot' in button_url and 'start=' in button_url:
+                                if button_url.startswith('tg://'):
+                                    match = re.search(r'start=([^&]+)', button_url)
+                                    if match:
+                                        start_param = match.group(1)
+                                        button_url = f"https://t.me/FreakRedanBot?start={start_param}"
+                                elif not button_url.startswith('http'):
+                                    button_url = 'https://' + button_url
+                                
+                                links.append({
+                                    'url': button_url,
+                                    'button': button
+                                })
+    except Exception as e:
+        logger.debug(f"Ошибка при поиске ссылок в кнопках: {e}")
     
     return links
 
@@ -117,23 +140,19 @@ async def retry_activation(client: TelegramClient, check_code: str, link: str):
 
 
 def extract_check_code(link: str) -> tuple:
-    match = re.search(r'start=code_([A-Z0-9]+)', link, re.IGNORECASE)
-    if match:
-        check_code = match.group(1)
-        start_param = f"code_{check_code}"
-        return check_code, start_param
-    
-    match = re.search(r'start=([^&\s]+)', link)
+    match = re.search(r'[?&]start=([^&\s?#]+)', link, re.IGNORECASE)
     if match:
         start_param = match.group(1)
+        
         if start_param.startswith('code_'):
-            check_code = start_param.replace('code_', '', 1)
+            check_code = start_param[5:]
             return check_code, start_param
-        elif '_' in start_param:
-            check_code = start_param.split('_', 1)[1]
-            return check_code, start_param
-        else:
-            return start_param, start_param
+        elif start_param.startswith('code') and '_' in start_param:
+            parts = start_param.split('_', 1)
+            if len(parts) == 2 and parts[1]:
+                return parts[1], start_param
+        
+        return start_param, start_param
     
     return None, None
 
@@ -144,8 +163,12 @@ async def process_ref_link(client: TelegramClient, link: str):
     try:
         check_code, start_param = extract_check_code(link)
         
-        if not check_code or not start_param:
+        if not start_param:
+            logger.warning(f"⚠️ Не удалось извлечь start_param из: {link}")
             return False
+        
+        if not check_code:
+            check_code = start_param
         
         bot_username = "FreakRedanBot"
         
@@ -189,6 +212,42 @@ async def handle_new_message(event: events.NewMessage.Event):
     message = event.message
     
     try:
+        full_message = await event.client.get_messages(message.peer_id, ids=message.id)
+        button_links = find_ref_links_in_buttons(full_message)
+    except:
+        button_links = find_ref_links_in_buttons(message)
+    
+    if button_links:
+        link = button_links[0]['url']
+        logger.info(f"🔘 КНОПКА: {link}")
+        success = await process_ref_link(event.client, link)
+        if success:
+            logger.info(f"✅ АКТИВИРОВАНО")
+        
+        try:
+            if hasattr(message.peer_id, 'channel_id'):
+                channel_id = message.peer_id.channel_id
+            elif hasattr(message.peer_id, 'chat_id'):
+                channel_id = message.peer_id.chat_id
+            else:
+                channel_id = None
+            if channel_id:
+                if channel_id not in channel_names:
+                    channel_names[channel_id] = f'Канал {channel_id}'
+                channel_access[channel_id] = True
+                channel_check_counts[channel_id] += 1
+        except:
+            pass
+        return
+    
+    text_links = extract_links_from_message(message)
+    if text_links:
+        logger.info(f"📝 ТЕКСТ: {text_links[0]}")
+        success = await process_ref_link(event.client, text_links[0])
+        if success:
+            logger.info(f"✅ АКТИВИРОВАНО")
+    
+    try:
         channel_entity = await event.client.get_entity(message.peer_id)
         channel_id = channel_entity.id
         channel_title = getattr(channel_entity, 'title', f'Канал {channel_id}')
@@ -213,17 +272,6 @@ async def handle_new_message(event: events.NewMessage.Event):
                 channel_check_counts[channel_id] += 1
         except:
             pass
-    
-    button_links = find_ref_links_in_buttons(message)
-    
-    if button_links:
-        link = button_links[0]['url']
-        await process_ref_link(event.client, link)
-        return
-    
-    text_links = extract_links_from_message(message)
-    if text_links:
-        await process_ref_link(event.client, text_links[0])
 
 
 def display_status():
