@@ -20,7 +20,7 @@ channel_names = {}
 channel_access = {}
 
 REF_LINK_PATTERN = re.compile(
-    r'(?:https?://)?t\.me/FreakRedanBot\?start=code(?:_[A-Z0-9]+)?',
+    r'(?:https?://)?t\.me/FreakRedanBot\?start=code(?:_[^&\s?#]+)?',
     re.IGNORECASE
 )
 
@@ -39,6 +39,7 @@ check_attempts = defaultdict(int)
 MAX_ATTEMPTS = 2
 last_activated_check = None
 pending_retries = {}
+last_checked_messages = {}
 
 check_lock = asyncio.Lock()
 
@@ -92,27 +93,92 @@ def find_ref_links_in_buttons(message: Message):
                 if hasattr(row, 'buttons'):
                     for button in row.buttons:
                         button_url = None
+                        
                         if hasattr(button, 'url'):
                             button_url = button.url
+                        elif hasattr(button, 'data'):
+                            continue
                         
-                        if button_url:
-                            if 'FreakRedanBot' in button_url and 'start=' in button_url:
-                                if button_url.startswith('tg://'):
-                                    match = re.search(r'start=([^&]+)', button_url)
-                                    if match:
-                                        start_param = match.group(1)
-                                        button_url = f"https://t.me/FreakRedanBot?start={start_param}"
-                                elif not button_url.startswith('http'):
-                                    button_url = 'https://' + button_url
-                                
+                        if not button_url:
+                            continue
+                        
+                        normalized_url = button_url
+                        
+                        if button_url.startswith('tg://'):
+                            match = re.search(r'[?&]start=([^&\s?#]+)', button_url, re.IGNORECASE)
+                            if match:
+                                start_param = match.group(1)
+                                if 'code' in start_param.lower():
+                                    normalized_url = f"https://t.me/FreakRedanBot?start={start_param}"
+                                else:
+                                    normalized_url = f"https://t.me/FreakRedanBot?start={start_param}"
+                        elif not button_url.startswith('http'):
+                            normalized_url = 'https://' + button_url
+                        
+                        if REF_LINK_PATTERN.search(normalized_url) or BOT_LINK_PATTERN.search(normalized_url):
+                            if 'start=code' in normalized_url.lower() or 'start=' in normalized_url.lower():
+                                if normalized_url not in [link['url'] for link in links]:
+                                    links.append({
+                                        'url': normalized_url,
+                                        'button': button
+                                    })
+                        elif 'start=' in normalized_url.lower() and ('freakredanbot' in normalized_url.lower() or 't.me' in normalized_url.lower() or 'telegram.me' in normalized_url.lower()):
+                            if normalized_url not in [link['url'] for link in links]:
                                 links.append({
-                                    'url': button_url,
+                                    'url': normalized_url,
                                     'button': button
                                 })
     except Exception as e:
-        logger.debug(f"Ошибка при поиске ссылок в кнопках: {e}")
+        logger.error(f"Ошибка при поиске ссылок в кнопках: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
     
     return links
+
+
+async def periodic_channel_check(client: TelegramClient):
+    global last_checked_messages
+    
+    while True:
+        try:
+            await asyncio.sleep(0.3)
+            
+            for channel_id in CHANNELS:
+                try:
+                    messages = await client.get_messages(channel_id, limit=5)
+                    
+                    if not messages:
+                        continue
+                    
+                    for message in messages:
+                        msg_id = message.id
+                        
+                        channel_key = f"{channel_id}_{msg_id}"
+                        if channel_key in last_checked_messages:
+                            continue
+                        
+                        last_checked_messages[channel_key] = True
+                        
+                        if len(last_checked_messages) > 100:
+                            oldest_key = min(last_checked_messages.keys())
+                            del last_checked_messages[oldest_key]
+                        
+                        class FakeEvent:
+                            def __init__(self, client, message):
+                                self.client = client
+                                self.message = message
+                        
+                        fake_event = FakeEvent(client, message)
+                        await handle_new_message(fake_event)
+                        display_status()
+                        
+                except Exception as e:
+                    logger.debug(f"Ошибка проверки канала {channel_id}: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"Ошибка в периодической проверке: {e}")
+            await asyncio.sleep(1)
 
 
 async def retry_activation(client: TelegramClient, check_code: str, link: str):
@@ -192,6 +258,7 @@ async def process_ref_link(client: TelegramClient, link: str):
         
         logger.info(f"⚡ АКТИВИРУЮ: {check_code}")
         await client.send_message(bot_username, f"/start {start_param}")
+        logger.info(f"✅ АКТИВИРОВАНО: {check_code}")
         
         return True
     except Exception as e:
@@ -208,21 +275,32 @@ async def process_ref_link(client: TelegramClient, link: str):
         return False
 
 
-async def handle_new_message(event: events.NewMessage.Event):
+async def handle_new_message(event):
     message = event.message
+    client = event.client
     
+    full_message = None
     try:
-        full_message = await event.client.get_messages(message.peer_id, ids=message.id)
-        button_links = find_ref_links_in_buttons(full_message)
-    except:
+        if hasattr(message, 'peer_id') and message.peer_id:
+            full_message = await client.get_messages(message.peer_id, ids=message.id)
+            button_links = find_ref_links_in_buttons(full_message)
+        else:
+            button_links = []
+        if not button_links and hasattr(message, 'reply_markup') and message.reply_markup:
+            button_links = find_ref_links_in_buttons(message)
+    except Exception as e:
+        logger.debug(f"Ошибка загрузки сообщения: {e}")
         button_links = find_ref_links_in_buttons(message)
     
     if button_links:
         link = button_links[0]['url']
-        logger.info(f"🔘 КНОПКА: {link}")
-        success = await process_ref_link(event.client, link)
-        if success:
-            logger.info(f"✅ АКТИВИРОВАНО")
+        logger.info(f"🔘 КНОПКА НАЙДЕНА: {link}")
+        
+        check_code, start_param = extract_check_code(link)
+        if check_code and start_param:
+            asyncio.create_task(process_ref_link(client, link))
+        else:
+            logger.warning(f"⚠️ Не удалось извлечь код из кнопки: {link}")
         
         try:
             if hasattr(message.peer_id, 'channel_id'):
@@ -238,24 +316,28 @@ async def handle_new_message(event: events.NewMessage.Event):
                 channel_check_counts[channel_id] += 1
         except:
             pass
+        display_status()
         return
     
     text_links = extract_links_from_message(message)
     if text_links:
-        logger.info(f"📝 ТЕКСТ: {text_links[0]}")
-        success = await process_ref_link(event.client, text_links[0])
-        if success:
-            logger.info(f"✅ АКТИВИРОВАНО")
+        link = text_links[0]
+        logger.info(f"📝 ТЕКСТ НАЙДЕН: {link}")
+        asyncio.create_task(process_ref_link(client, link))
     
     try:
-        channel_entity = await event.client.get_entity(message.peer_id)
-        channel_id = channel_entity.id
-        channel_title = getattr(channel_entity, 'title', f'Канал {channel_id}')
-        
-        if channel_id not in channel_names:
-            channel_names[channel_id] = channel_title
-        channel_access[channel_id] = True
-        channel_check_counts[channel_id] += 1
+        if hasattr(message, 'peer_id') and message.peer_id:
+            try:
+                channel_entity = await client.get_entity(message.peer_id)
+                channel_id = channel_entity.id
+                channel_title = getattr(channel_entity, 'title', f'Канал {channel_id}')
+                
+                if channel_id not in channel_names:
+                    channel_names[channel_id] = channel_title
+                channel_access[channel_id] = True
+                channel_check_counts[channel_id] += 1
+            except:
+                pass
     except:
         try:
             if hasattr(message.peer_id, 'channel_id'):
@@ -434,6 +516,8 @@ async def main():
                             if last_activated_check == current_check:
                                 last_activated_check = None
                             pending_retries.pop(current_check, None)
+        
+        asyncio.create_task(periodic_channel_check(client))
         
         await client.run_until_disconnected()
         
