@@ -272,7 +272,7 @@ async def process_ref_link(client: TelegramClient, link: str):
                     pending_retries.pop(check_code, None)
                     if last_activated_check == check_code:
                         last_activated_check = None
-        except:
+        except Exception:
             pass
         return False
 
@@ -316,7 +316,7 @@ async def handle_new_message(event):
                     channel_names[channel_id] = f'Канал {channel_id}'
                 channel_access[channel_id] = True
                 channel_check_counts[channel_id] += 1
-        except:
+        except Exception:
             pass
         display_status()
         return
@@ -338,9 +338,9 @@ async def handle_new_message(event):
                     channel_names[channel_id] = channel_title
                 channel_access[channel_id] = True
                 channel_check_counts[channel_id] += 1
-            except:
+            except Exception:
                 pass
-    except:
+    except Exception:
         try:
             if hasattr(message.peer_id, 'channel_id'):
                 channel_id = message.peer_id.channel_id
@@ -354,7 +354,7 @@ async def handle_new_message(event):
                     channel_names[channel_id] = f'Канал {channel_id}'
                 channel_access[channel_id] = True
                 channel_check_counts[channel_id] += 1
-        except:
+        except Exception:
             pass
 
 
@@ -468,7 +468,7 @@ async def main():
                                 channel_names[channel_id] = f"@{username}"
                         channel_access[channel_id] = True
                         channels_need_subscription.remove(channel_id)
-                    except:
+                    except Exception:
                         channel_access[channel_id] = False
             except Exception as e:
                 pass
