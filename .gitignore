@@ -1,19 +1,18 @@
+# Сессии
 *.session
 *.session-journal
+telegram_bot_session*
+
+# Конфиг с секретами
+config.py
+
+# Окружение
 .env
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
 venv/
-ENV/
-build/
-dist/
-*.egg-info/
-.vscode/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
 .idea/
-*.swp
-*.swo
-*~
+.vscode/
