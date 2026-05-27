@@ -3,7 +3,7 @@ import re
 from telethon import TelegramClient, events
 from telethon.tl.types import Message, MessageEntityUrl, MessageEntityTextUrl
 import logging
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from config import CHANNELS, BOT_ID, TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE_NUMBER
 
 logging.getLogger('telethon').setLevel(logging.WARNING)
@@ -39,7 +39,8 @@ check_attempts = defaultdict(int)
 MAX_ATTEMPTS = 2
 last_activated_check = None
 pending_retries = {}
-last_checked_messages = {}
+# Используем OrderedDict для O(1) удаления самого старого ключа
+last_checked_messages = OrderedDict()
 
 check_lock = asyncio.Lock()
 
@@ -141,7 +142,8 @@ async def periodic_channel_check(client: TelegramClient):
     
     while True:
         try:
-            await asyncio.sleep(0.3)
+            # 3 секунды между итерациями вместо 0.3 — снижает риск FloodWait
+            await asyncio.sleep(3)
             
             for channel_id in CHANNELS:
                 try:
@@ -160,8 +162,8 @@ async def periodic_channel_check(client: TelegramClient):
                         last_checked_messages[channel_key] = True
                         
                         if len(last_checked_messages) > 100:
-                            oldest_key = min(last_checked_messages.keys())
-                            del last_checked_messages[oldest_key]
+                            # OrderedDict.popitem(last=False) — O(1) удаление самого старого
+                            last_checked_messages.popitem(last=False)
                         
                         class FakeEvent:
                             def __init__(self, client, message):
@@ -365,7 +367,7 @@ def display_status():
         status_lines.append(f"{name.upper()} - {access_status}")
     
     status_text = ' | '.join(status_lines)
-    print(status_text)
+    print(status_text, flush=True)
 
 
 def setup_api_credentials():
@@ -528,9 +530,12 @@ async def main():
         import traceback
         traceback.print_exc()
     finally:
-        if client.is_connected():
-            await client.disconnect()
-            print("👋 Клиент отключен")
+        try:
+            if client.is_connected():
+                await client.disconnect()
+                print("👋 Клиент отключен")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
