@@ -1,0 +1,15 @@
+[Unit]
+Description=Lovecfriki Telegram Auto-Claimer Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/lovecfriki
+ExecStart=/opt/lovecfriki/venv/bin/python main.py
+Restart=always
+RestartSec=10
+EnvironmentFile=/opt/lovecfriki/.env
+
+[Install]
+WantedBy=multi-user.target
