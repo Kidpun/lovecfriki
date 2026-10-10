@@ -1,0 +1,11 @@
+version: "3.8"
+
+services:
+  lovecfriki:
+    build: .
+    container_name: lovecfriki_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./sessions:/app/sessions
